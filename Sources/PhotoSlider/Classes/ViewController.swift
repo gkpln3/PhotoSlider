@@ -12,12 +12,17 @@ import UIKit
     @objc optional func photoSliderControllerDidDismiss(_ viewController: PhotoSlider.ViewController)
 }
 
+@objc public protocol PhotoSliderDataSource {
+    @objc func photoSlider(_ viewController: PhotoSlider.ViewController, imageFor index: Int) async -> UIImage
+    @objc func photoSliderImageCountFor(_ viewController: PhotoSlider.ViewController) -> Int
+}
+
 enum PhotoSliderControllerScrollMode: UInt {
     case None = 0, Vertical, Horizontal, Rotating
 }
 
 enum PhotoSliderControllerUsingImageType: UInt {
-    case None = 0, URL, Image, Photo
+    case None = 0, URL, Image, Photo, DataSource
 }
 
 public class ViewController: UIViewController {
@@ -37,7 +42,7 @@ public class ViewController: UIViewController {
         scrollView.accessibilityLabel = "PhotoSliderScrollView"
 
         scrollView.contentSize = CGSize(
-            width: self.view.bounds.width * CGFloat(self.imageResources()!.count),
+            width: self.view.bounds.width * CGFloat(self.imageCount()),
             height: self.view.bounds.height * 3.0
         )
 
@@ -49,6 +54,7 @@ public class ViewController: UIViewController {
     var images: [UIImage]?
     var photos: [PhotoSlider.Photo]?
     var usingImageType: PhotoSliderControllerUsingImageType = .None
+    var dataSource: PhotoSliderDataSource?
 
     lazy var backgroundView: UIView = {
         let backgroundView = UIView(frame: self.view.bounds)
@@ -105,6 +111,7 @@ public class ViewController: UIViewController {
     var scrollInitalized = false
     var closeAnimating = false
     var imageViews: [PhotoSlider.ImageView] = []
+    var _imageCount: Int? = nil
     var previousPage = 0
     lazy var captionLabel: UILabel = {
         let label = UILabel(frame: CGRect.zero)
@@ -127,7 +134,7 @@ public class ViewController: UIViewController {
     lazy public var pageControl: UIPageControl = {
         let pageControl = UIPageControl()
         pageControl.frame = .zero
-        pageControl.numberOfPages = self.imageResources()!.count
+        pageControl.numberOfPages = self.imageCount()
         pageControl.isUserInteractionEnabled = false
         return pageControl
     }()
@@ -158,6 +165,12 @@ public class ViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
         self.photos = photos
         usingImageType = .Photo
+    }
+    
+    public init(dataSource: PhotoSlider.PhotoSliderDataSource) {
+        super.init(nibName: nil, bundle: nil)
+        self.dataSource = dataSource
+        usingImageType = .DataSource
     }
 
     required public init?(coder aDecoder: NSCoder) {
@@ -195,30 +208,8 @@ public class ViewController: UIViewController {
         if imageLoader == nil {
             imageLoader = PhotoSlider.KingfisherImageLoader()
         }
-
-        for imageResource in imageResources()! {
-
-            let imageView: PhotoSlider.ImageView = PhotoSlider.ImageView(frame: frame)
-            imageView.delegate = self
-            imageView.imageLoader = imageLoader
-            scrollView.addSubview(imageView)
-
-            if imageResource is URL {
-                imageView.loadImage(imageURL: imageResource as! URL)
-            } else if imageResource is UIImage {
-                imageView.setImage(image: imageResource as! UIImage)
-            } else {
-                let photo = imageResource as! PhotoSlider.Photo
-                if photo.imageURL != nil {
-                    imageView.loadImage(imageURL: photo.imageURL!)
-                } else {
-                    imageView.setImage(image: photo.image!)
-                }
-            }
-
-            frame.origin.x += width
-            imageViews.append(imageView)
-        }
+            
+        loadImages()
 
         // Close Button
         if visibleCloseButton {
@@ -255,7 +246,7 @@ public class ViewController: UIViewController {
 
         setNeedsStatusBarAppearanceUpdate()
     }
-
+    
     @objc func closeButtonDidTap(_ sender: UIButton) {
         delegate?.photoSliderControllerWillDismiss?(self)
         dissmissViewControllerAnimated(animated: true)
@@ -287,7 +278,47 @@ public class ViewController: UIViewController {
             self.setNeedsStatusBarAppearanceUpdate()
         }
     }
+    
+    private func loadImages() {
+        let width = view.bounds.width
+        let height = view.bounds.height
+        var frame = view.bounds
+        
+        for i in 0..<imageCount() {
+            let imageView: PhotoSlider.ImageView = PhotoSlider.ImageView(frame: frame)
+            imageView.delegate = self
+            imageView.imageLoader = imageLoader
+            scrollView.addSubview(imageView)
+            frame.origin.x += width
+            imageViews.append(imageView)
+        
+            switch usingImageType {
+            case .DataSource:
+                Task {
+                    imageView.progressView.isHidden = false
+                    let image = await dataSource!.photoSlider(self, imageFor: i)
+                    imageView.progressView.isHidden = true
+                    imageView.setImage(image: image)
+                }
+                
+            default:
+                let imageResource = imageResources()![i]
 
+                if imageResource is URL {
+                    imageView.loadImage(imageURL: imageResource as! URL)
+                } else if imageResource is UIImage {
+                    imageView.setImage(image: imageResource as! UIImage)
+                } else {
+                    let photo = imageResource as! PhotoSlider.Photo
+                    if photo.imageURL != nil {
+                        imageView.loadImage(imageURL: photo.imageURL!)
+                    } else {
+                        imageView.setImage(image: photo.image!)
+                    }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Setup Layout
@@ -382,7 +413,7 @@ extension ViewController: UIScrollViewDelegate {
             generateCurrentPage()
             return
         }
-
+        
         let imageView = imageViews[currentPage]
         if imageView.scrollView.zoomScale > 1.0 {
             generateCurrentPage()
@@ -439,8 +470,8 @@ extension ViewController: UIScrollViewDelegate {
         var page = Int(round(scrollView.contentOffset.x / scrollView.frame.size.width))
         if page < 0 {
             page = 0
-        } else if page >= imageResources()!.count {
-            page = imageResources()!.count - 1
+        } else if page >= imageCount() {
+            page = imageCount() - 1
         }
 
         currentPage = page
@@ -604,7 +635,7 @@ extension ViewController {
 
         // Scroll View
         scrollView.contentSize = CGSize(
-            width: contentViewBounds.width * CGFloat(imageResources()!.count),
+            width: contentViewBounds.width * CGFloat(imageCount()),
             height: contentViewBounds.height * 3.0
         )
         scrollView.frame = contentViewBounds
@@ -677,6 +708,23 @@ extension ViewController: ZoomingAnimationControllerTransitioning {
         }
         return nil
     }
+    
+    fileprivate func imageCount() -> Int {
+        if let count = _imageCount {
+            return count
+        }
+        self._imageCount = {
+            switch usingImageType {
+            case .URL, .Photo, .Image:
+                return imageResources()!.count
+            case .DataSource:
+                return dataSource!.photoSliderImageCountFor(self)
+            case .None:
+                return 0
+            }
+        }()
+        return self._imageCount!
+    }
 
     fileprivate func getAttributedString(for text: String, with height: CGFloat) -> NSMutableAttributedString {
         let attributedString = NSMutableAttributedString(string: text)
@@ -689,7 +737,7 @@ extension ViewController: ZoomingAnimationControllerTransitioning {
 
     fileprivate func updateCaption() {
         if usingImageType == .Photo {
-            if imageResources()!.count > 0 {
+            if imageCount() > 0 {
                 let photo = photos![currentPage] as Photo
                 UIView.animate(
                     withDuration: 0.1,

@@ -119,7 +119,8 @@ extension ViewController: UICollectionViewDelegate {
         // Using transition
         //let photoSlider = PhotoSlider.ViewController(imageURLs: imageURLs)
         //let photoSlider = PhotoSlider.ViewController(images: images)
-        let photoSlider = PhotoSlider.ViewController(photos: photos)
+//        let photoSlider = PhotoSlider.ViewController(photos: photos)
+        let photoSlider = PhotoSlider.ViewController(dataSource: self)
         photoSlider.backgroundViewColor = .clear
         photoSlider.delegate = self
         photoSlider.currentPage = indexPath.row
@@ -317,4 +318,15 @@ extension ViewController {
         currentRow = row
     }
     
+}
+
+extension ViewController: PhotoSliderDataSource {
+    func photoSlider(_ viewController: PhotoSlider.ViewController, imageFor index: Int) async -> UIImage {
+        try? await Task.sleep(nanoseconds: UInt64(1e9))
+        return images[index]
+    }
+    
+    func photoSliderImageCountFor(_ viewController: PhotoSlider.ViewController) -> Int {
+        return images.count
+    }
 }

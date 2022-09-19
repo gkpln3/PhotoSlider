@@ -294,12 +294,12 @@ public class ViewController: UIViewController {
         
             switch usingImageType {
             case .DataSource:
-                Task {
+                Task(priority: .background, operation: {
                     imageView.progressView.isHidden = false
                     let image = await dataSource!.photoSlider(self, imageFor: i)
                     imageView.progressView.isHidden = true
                     imageView.setImage(image: image)
-                }
+                })
                 
             default:
                 let imageResource = imageResources()![i]
